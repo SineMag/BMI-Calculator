@@ -170,6 +170,12 @@ static void handle_client(SOCKET client) {
 }
 
 int main() {
+    const char* port_env = std::getenv("PORT");
+    int port = 8080;
+    if (port_env && *port_env) {
+        int p = std::atoi(port_env);
+        if (p > 0 && p < 65536) port = p;
+    }
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
         std::printf("WSAStartup failed\n");
@@ -186,7 +192,7 @@ int main() {
     sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(8080);
+    addr.sin_port = htons(static_cast<u_short>(port));
 
     if (bind(server, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         std::printf("bind failed\n");
@@ -202,7 +208,7 @@ int main() {
         return 1;
     }
 
-    std::printf("BMI server running on http://localhost:8080\n");
+    std::printf("BMI server running on http://localhost:%d\n", port);
 
     while (true) {
         SOCKET client = accept(server, nullptr, nullptr);

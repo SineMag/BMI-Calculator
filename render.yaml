@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: bmi-calculator-cpp
+    env: docker
+    plan: free
+    autoDeploy: true

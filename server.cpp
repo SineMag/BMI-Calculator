@@ -1,12 +1,29 @@
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#endif
+
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <sstream>
 #include <fstream>
 #include <unordered_map>
 
-#pragma comment(lib, "Ws2_32.lib")
+#ifdef _WIN32
+using socket_t = SOCKET;
+static void socket_close(socket_t s) { closesocket(s); }
+#else
+using socket_t = int;
+static void socket_close(socket_t s) { close(s); }
+#endif
 
 static std::string read_file(const std::string &path) {
     std::ifstream f(path, std::ios::binary);
@@ -60,6 +77,8 @@ static std::string content_type_for(const std::string &path) {
     if (path.size() >= 5 && path.substr(path.size()-5) == ".html") return "text/html; charset=utf-8";
     if (path.size() >= 3 && path.substr(path.size()-3) == ".js") return "application/javascript; charset=utf-8";
     if (path.size() >= 4 && path.substr(path.size()-4) == ".css") return "text/css; charset=utf-8";
+    if (path.size() >= 4 && path.substr(path.size()-4) == ".ico") return "image/x-icon";
+    if (path.size() >= 4 && path.substr(path.size()-4) == ".svg") return "image/svg+xml";
     if (path.size() >= 5 && path.substr(path.size()-5) == ".json") return "application/json; charset=utf-8";
     return "application/octet-stream";
 }
@@ -75,7 +94,7 @@ static std::string http_response(int code, const std::string &status, const std:
     return ss.str();
 }
 
-static void handle_client(SOCKET client) {
+static void handle_client(socket_t client) {
     std::string req;
     char buf[4096];
     int received = 0;
@@ -105,6 +124,12 @@ static void handle_client(SOCKET client) {
         while (body.size() < content_length && (received = recv(client, buf, sizeof(buf), 0)) > 0) {
             body.append(buf, buf + received);
         }
+    }
+
+    if (method == "GET" && path == "/health") {
+        std::string resp = http_response(200, "OK", "application/json; charset=utf-8", "{\"status\":\"ok\"}");
+        send(client, resp.c_str(), (int)resp.size(), 0);
+        return;
     }
 
     if (method == "GET") {
@@ -176,48 +201,73 @@ int main() {
         int p = std::atoi(port_env);
         if (p > 0 && p < 65536) port = p;
     }
+
+#ifdef _WIN32
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
         std::printf("WSAStartup failed\n");
         return 1;
     }
+#endif
 
-    SOCKET server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    socket_t server = socket(AF_INET, SOCK_STREAM, 0);
+#ifdef _WIN32
     if (server == INVALID_SOCKET) {
         std::printf("socket failed\n");
         WSACleanup();
         return 1;
     }
+#else
+    if (server < 0) {
+        std::printf("socket failed\n");
+        return 1;
+    }
+#endif
 
     sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(static_cast<u_short>(port));
+    addr.sin_port = htons(static_cast<unsigned short>(port));
 
-    if (bind(server, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+#ifndef _WIN32
+    int opt = 1;
+    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
+
+    if (bind(server, (sockaddr*)&addr, sizeof(addr)) == -1) {
         std::printf("bind failed\n");
-        closesocket(server);
+        socket_close(server);
+#ifdef _WIN32
         WSACleanup();
+#endif
         return 1;
     }
 
-    if (listen(server, 10) == SOCKET_ERROR) {
+    if (listen(server, 10) == -1) {
         std::printf("listen failed\n");
-        closesocket(server);
+        socket_close(server);
+#ifdef _WIN32
         WSACleanup();
+#endif
         return 1;
     }
 
     std::printf("BMI server running on http://localhost:%d\n", port);
 
     while (true) {
-        SOCKET client = accept(server, nullptr, nullptr);
+        socket_t client = accept(server, nullptr, nullptr);
+#ifdef _WIN32
         if (client == INVALID_SOCKET) continue;
+#else
+        if (client < 0) continue;
+#endif
         handle_client(client);
-        closesocket(client);
+        socket_close(client);
     }
 
-    closesocket(server);
+    socket_close(server);
+#ifdef _WIN32
     WSACleanup();
+#endif
     return 0;
 }
